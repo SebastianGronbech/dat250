@@ -6,7 +6,7 @@ It also contains the SQL queries used for communicating with the database.
 
 from pathlib import Path
 
-from flask import flash, redirect, render_template, send_from_directory, url_for
+from flask import flash, redirect, render_template, send_from_directory, url_for, session
 
 from app import app, sqlite
 from app.forms import CommentsForm, FriendsForm, IndexForm, PostForm, ProfileForm
@@ -34,19 +34,13 @@ def index():
         """
         user = sqlite.query(get_user, login_form.username.data, one=True)
 
-
-
-
-
-
-
         if user is None:
             flash("Sorry, this user does not exist!", category="warning")
         elif user["password"] != login_form.password.data:
             flash("Sorry, wrong password!", category="warning")
         elif user["password"] == login_form.password.data:
+            session["username"] = login_form.data["username"]
             return redirect(url_for("stream", username=login_form.username.data))
-
 
     elif register_form.is_submitted() and register_form.submit.data:
         insert_user = f"""
@@ -60,19 +54,22 @@ def index():
     return render_template("index.html.j2", title="Welcome", form=index_form)
 
 
-@app.route("/stream/<string:username>", methods=["GET", "POST"])
-def stream(username: str):
+@app.route("/stream", methods=["GET", "POST"])
+def stream():
     """Provides the stream page for the application.
 
     If a form was submitted, it reads the form data and inserts a new post into the database.
 
     Otherwise, it reads the username from the URL and displays all posts from the user and their friends.
     """
+    if not session:
+        return redirect(url_for("index"))
+
     post_form = PostForm()
     get_user = f"""
         SELECT *
         FROM Users
-        WHERE username = '{username}';
+        WHERE username = '{session["username"]}';
         """
     user = sqlite.query(get_user, one=True)
 
@@ -86,7 +83,7 @@ def stream(username: str):
             VALUES (?, ?, ?, CURRENT_TIMESTAMP);
         """
         sqlite.query(insert_post, user["id"], post_form.content.data, post_form.image.data.filename)
-        return redirect(url_for("stream", username=username))
+        return redirect(url_for("stream"))
 
     get_posts = f"""
          SELECT p.*, u.*, (SELECT COUNT(*) FROM Comments WHERE p_id = p.id) AS cc
@@ -95,22 +92,25 @@ def stream(username: str):
          ORDER BY p.creation_time DESC;
         """
     posts = sqlite.query(get_posts)
-    return render_template("stream.html.j2", title="Stream", username=username, form=post_form, posts=posts)
+    return render_template("stream.html.j2", title="Stream", form=post_form, posts=posts)
 
 
-@app.route("/comments/<string:username>/<int:post_id>", methods=["GET", "POST"])
-def comments(username: str, post_id: int):
+@app.route("/comments/<int:post_id>", methods=["GET", "POST"])
+def comments(post_id: int):
     """Provides the comments page for the application.
 
     If a form was submitted, it reads the form data and inserts a new comment into the database.
 
     Otherwise, it reads the username and post id from the URL and displays all comments for the post.
     """
+    if not session:
+        return redirect(url_for("index"))
+
     comments_form = CommentsForm()
     get_user = f"""
         SELECT *
         FROM Users
-        WHERE username = '{username}';
+        WHERE username = '{session["username"]}';
         """
     user = sqlite.query(get_user, one=True)
 
@@ -119,8 +119,7 @@ def comments(username: str, post_id: int):
             INSERT INTO Comments (p_id, u_id, comment, creation_time)
             VALUES (?, ?, ?, CURRENT_TIMESTAMP);
         """
-        sqlite.query(insert_comment, (post_id, user["id"], comments_form.comment.data))
-
+        sqlite.query(insert_comment, post_id, user["id"], comments_form.comment.data)
 
     get_post = f"""
         SELECT *
@@ -136,23 +135,31 @@ def comments(username: str, post_id: int):
     post = sqlite.query(get_post, one=True)
     comments = sqlite.query(get_comments)
     return render_template(
-        "comments.html.j2", title="Comments", username=username, form=comments_form, post=post, comments=comments
+        "comments.html.j2",
+        title="Comments",
+        username=session["username"],
+        form=comments_form,
+        post=post,
+        comments=comments,
     )
 
 
-@app.route("/friends/<string:username>", methods=["GET", "POST"])
-def friends(username: str):
+@app.route("/friends", methods=["GET", "POST"])
+def friends():
     """Provides the friends page for the application.
 
     If a form was submitted, it reads the form data and inserts a new friend into the database.
 
     Otherwise, it reads the username from the URL and displays all friends of the user.
     """
+    if not session:
+        return redirect(url_for("index"))
+
     friends_form = FriendsForm()
     get_user = f"""
         SELECT *
         FROM Users
-        WHERE username = '{username}';
+        WHERE username = '{session["username"]}';
         """
     user = sqlite.query(get_user, one=True)
     friends = []
@@ -169,45 +176,45 @@ def friends(username: str):
           FROM Friends
         WHERE u_id = ?;
         """
-        friends = sqlite.query(get_friends, user["id"])  
-
+        friends = sqlite.query(get_friends, user["id"])
 
         if friend is None:
-          flash("User does not exist!", category="warning")
+            flash("User does not exist!", category="warning")
         elif friend["id"] == user["id"]:
-          flash("You cannot be friends with yourself!", category="warning")
+            flash("You cannot be friends with yourself!", category="warning")
         elif friend["id"] in [friend["f_id"] for friend in friends]:
-          flash("You are already friends with this user!", category="warning")
+            flash("You are already friends with this user!", category="warning")
         else:
-          insert_friend = """
+            insert_friend = """
            INSERT INTO Friends (u_id, f_id)
            VALUES (?, ?);
           """
-    
-          
-          sqlite.query(insert_friend, user["id"], friend["id"])
 
-  
+            sqlite.query(insert_friend, user["id"], friend["id"])
 
-          flash("Friend successfully added!", category="success")
+            flash("Friend successfully added!", category="success")
 
-        
-    return render_template("friends.html.j2", title="Friends", username=username, friends=friends, form=friends_form)
+    return render_template(
+        "friends.html.j2", title="Friends", username=session["username"], friends=friends, form=friends_form
+    )
 
 
-@app.route("/profile/<string:username>", methods=["GET", "POST"])
-def profile(username: str):
+@app.route("/profile", methods=["GET", "POST"])
+def profile():
     """Provides the profile page for the application.
 
     If a form was submitted, it reads the form data and updates the user's profile in the database.
 
     Otherwise, it reads the username from the URL and displays the user's profile.
     """
+    if not session:
+        return redirect(url_for("index"))
+
     profile_form = ProfileForm()
     get_user = f"""
         SELECT *
         FROM Users
-        WHERE username = '{username}';
+        WHERE username = '{session["username"]}';
         """
     user = sqlite.query(get_user, one=True)
 
@@ -217,22 +224,31 @@ def profile(username: str):
           SET education=?, employment=?, music=?, movie=?, nationality=?, birthday=?
           WHERE username=?;
         """
-        sqlite.query(update_profile, 
-         profile_form.education.data,
-         profile_form.employment.data,
-         profile_form.music.data,
-         profile_form.movie.data,
-         profile_form.nationality.data,
-         profile_form.birthday.data,
-         username,
-)
+        sqlite.query(
+            update_profile,
+            profile_form.education.data,
+            profile_form.employment.data,
+            profile_form.music.data,
+            profile_form.movie.data,
+            profile_form.nationality.data,
+            profile_form.birthday.data,
+            session["username"],
+        )
 
-        return redirect(url_for("profile", username=username))
+        return redirect(url_for("profile"))
 
-    return render_template("profile.html.j2", title="Profile", username=username, user=user, form=profile_form)
+    return render_template(
+        "profile.html.j2", title="Profile", username=session["username"], user=user, form=profile_form
+    )
 
 
 @app.route("/uploads/<string:filename>")
 def uploads(filename):
     """Provides an endpoint for serving uploaded files."""
     return send_from_directory(Path(app.instance_path) / app.config["UPLOADS_FOLDER_PATH"], filename)
+
+
+@app.route("/logout")
+def logout():
+    session.pop("username", None)
+    return redirect(url_for("index"))
