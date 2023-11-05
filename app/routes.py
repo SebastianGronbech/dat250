@@ -32,7 +32,7 @@ def index():
             FROM Users
             WHERE username = ?;
         """
-        user = sqlite.query(get_user, login_form.username.data, one=True)
+        user = sqlite.query(get_user, login_form.username.data, one=True,)
 
         if user is None:
             flash("Sorry, this user does not exist!", category="warning")
@@ -43,11 +43,12 @@ def index():
             return redirect(url_for("stream", username=login_form.username.data))
 
     elif register_form.is_submitted() and register_form.submit.data:
-        insert_user = f"""
-            INSERT INTO Users (username, first_name, last_name, password)
-            VALUES ('{register_form.username.data}', '{register_form.first_name.data}', '{register_form.last_name.data}', '{register_form.password.data}');
-            """
-        sqlite.query(insert_user)
+        insert_user = """
+         INSERT INTO Users (username, first_name, last_name, password)
+         VALUES (?, ?, ?, ?);
+        """
+        user = sqlite.query(insert_user, register_form.username.data, register_form.first_name.data, register_form.last_name.data, register_form.password.data)
+
         flash("User successfully created!", category="success")
         return redirect(url_for("index"))
 
